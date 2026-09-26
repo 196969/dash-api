@@ -27,8 +27,46 @@ export default async function handler(req, res) {
       const qr = j.QueryResponse || {};
       out[k] = qr[Object.keys(qr).find(x => Array.isArray(qr[x]))] || [];
     }
+    // Income and expense accounts carry no balance on the Account list; their
+    // totals live on the Profit & Loss report. Read it (year to date, same
+    // accounting basis) and fill each P&L account's balance from its report row,
+    // so Compare-to-Dash sees real revenue and expenses. Still read-only.
+    const pl = { revenue: 0, expenses: 0, net: 0, period: 'This fiscal year to date' };
+    try {
+      const r = await fetch(`${API_BASE}/v3/company/${s.realm}/reports/ProfitAndLoss?minorversion=75&date_macro=This%20Fiscal%20Year-to-date`, {
+        headers: { Authorization: 'Bearer ' + t.access_token, Accept: 'application/json' },
+      });
+      if (r.ok) {
+        const rep = await r.json();
+        const byId = {};
+        const walk = rows => (rows || []).forEach(row => {
+          if (row.ColData && row.ColData[0] && row.ColData[0].id) {
+            const v = parseFloat(row.ColData[row.ColData.length - 1].value);
+            if (!isNaN(v)) byId[row.ColData[0].id] = (byId[row.ColData[0].id] || 0) + v;
+          }
+          if (row.Rows) walk(row.Rows.Row);
+          if (row.Summary && row.group) {
+            const v = parseFloat(row.Summary.ColData[row.Summary.ColData.length - 1].value);
+            if (!isNaN(v)) {
+              if (row.group === 'Income') pl.revenue = v;
+              if (row.group === 'Expenses' || row.group === 'OtherExpenses' || row.group === 'COGS') pl.expenses += v;
+              if (row.group === 'NetIncome') pl.net = v;
+            }
+          }
+        });
+        walk(rep.Rows && rep.Rows.Row);
+        const PL = ['Income', 'Other Income', 'Expense', 'Other Expense', 'Cost of Goods Sold'];
+        out.accounts.forEach(a => {
+          if (PL.includes(a.AccountType) && byId[a.Id] !== undefined) {
+            a.CurrentBalance = byId[a.Id];
+            a.BalanceSource = 'Profit & Loss report, year to date';
+          }
+        });
+      }
+    } catch (_) { /* P&L is best-effort; the account lists still return */ }
     res.status(200).json({
       connected: true,
+      pl,
       environment: env('QBO_ENV', 'sandbox'),
       realm: s.realm,
       syncedAt: new Date().toISOString(),
