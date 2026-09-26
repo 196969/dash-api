@@ -1,0 +1,8 @@
+{
+  "name": "dash-api",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "DashRite Advisory — Dash backend: QuickBooks Online read-only connector, neural TTS",
+  "engines": { "node": ">=18" }
+}
