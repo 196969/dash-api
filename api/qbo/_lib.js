@@ -47,7 +47,9 @@ export async function tokenRequest(params) {
     headers: { Authorization: basic(), Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(params).toString(),
   });
+  const tid = r.headers.get('intuit_tid') || '';
+  console.log(JSON.stringify({ qbo: 'token:' + params.grant_type, status: r.status, intuit_tid: tid }));
   const j = await r.json();
-  if (!r.ok) throw new Error('Intuit token error: ' + (j.error || r.status));
+  if (!r.ok) throw new Error('Intuit token error: ' + (j.error || r.status) + ' (intuit_tid ' + (tid || 'n/a') + ')');
   return j;
 }

@@ -10,8 +10,18 @@ const QUERIES = {
   purchases: 'select * from Purchase maxresults 1000',
 };
 
+// Intuit asks apps to keep the intuit_tid response header for support tracing.
+// Every call's tid is logged server-side (Vercel logs) and returned to Dash's sync log.
+function tidOf(r, call, tids) {
+  const tid = r.headers.get('intuit_tid') || '';
+  tids.push({ call, status: r.status, intuit_tid: tid });
+  console.log(JSON.stringify({ qbo: call, status: r.status, intuit_tid: tid }));
+  return tid;
+}
+
 export default async function handler(req, res) {
   if (cors(req, res)) return;
+  const tids = [];
   if (req.method !== 'POST') { res.status(405).json({ error: 'POST only' }); return; }
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : (req.body || {});
@@ -22,8 +32,9 @@ export default async function handler(req, res) {
       const r = await fetch(`${API_BASE}/v3/company/${s.realm}/query?minorversion=75&query=${encodeURIComponent(q)}`, {
         headers: { Authorization: 'Bearer ' + t.access_token, Accept: 'application/json' },
       });
+      const tid = tidOf(r, k, tids);
       const j = await r.json();
-      if (!r.ok) throw new Error('QuickBooks ' + k + ' read failed (' + r.status + ')');
+      if (!r.ok) throw new Error('QuickBooks ' + k + ' read failed (' + r.status + ', intuit_tid ' + (tid || 'n/a') + ')');
       const qr = j.QueryResponse || {};
       out[k] = qr[Object.keys(qr).find(x => Array.isArray(qr[x]))] || [];
     }
@@ -36,6 +47,7 @@ export default async function handler(req, res) {
       const r = await fetch(`${API_BASE}/v3/company/${s.realm}/reports/ProfitAndLoss?minorversion=75&date_macro=This%20Fiscal%20Year-to-date`, {
         headers: { Authorization: 'Bearer ' + t.access_token, Accept: 'application/json' },
       });
+      tidOf(r, 'ProfitAndLoss', tids);
       if (r.ok) {
         const rep = await r.json();
         const byId = {};
@@ -72,9 +84,11 @@ export default async function handler(req, res) {
       syncedAt: new Date().toISOString(),
       counts: Object.fromEntries(Object.entries(out).map(([k, v]) => [k, v.length])),
       data: out,
+      log: tids,
       token: seal({ r: t.refresh_token || s.r, realm: s.realm, at: Date.now() }),
     });
   } catch (e) {
-    res.status(200).json({ connected: false, error: e.message });
+    console.error(JSON.stringify({ qbo: 'error', error: e.message, tids }));
+    res.status(200).json({ connected: false, error: e.message, log: tids, reconnect: /invalid_grant|token error|401/i.test(e.message) });
   }
 }
